@@ -614,15 +614,24 @@ async def resume_approved_run(
     if decision != "approve":
         raise ValueError("Decision must be 'approve' or 'reject'")
 
-    if approval_request.get("tool") != "delete_file":
-        raise ValueError("Unsupported approval action")
+    approved_tool = approval_request.get("tool")
+    target_args = approval_request.get("arguments", {})
 
-    target_file = approval_request.get("path")
+    # Supported tools that can be approved and resumed
+    RESUMABLE_TOOLS = {
+        "delete_file", "run_command", "exec",
+        "git_push", "git_commit", "git_add", "git_reset",
+        "github_create_issue", "github_create_pr",
+        "sandbox_exec", "http_post", "http_put", "http_patch", "http_delete",
+        "write_file", "create_file", "update_file",
+    }
 
-    if not target_file:
-        raise ValueError("Approval request is missing the target path")
+    if not approved_tool or approved_tool not in RESUMABLE_TOOLS:
+        raise ValueError(f"Unsupported or missing approval action: '{approved_tool}'")
 
-    from app.workspace.tools import execute_tool
+    target_args = approval_request.get("arguments") or {}
+    if not isinstance(target_args, dict):
+        target_args = {}
 
     await emit(
         run_id,
@@ -634,38 +643,50 @@ async def resume_approved_run(
         }
     )
 
+
     await emit(
         run_id,
         "tool_call_started",
         "executor",
         {
-            "tool": "delete_file",
-            "path": target_file,
+            "tool": approved_tool,
+            "arguments": target_args,
             "approved": True
         }
     )
 
-    del_res = await asyncio.to_thread(
-        execute_tool,
-        "delete_file",
-        path=target_file,
-        approved=True
+    # Execute through ToolRegistry with approved=True context flag
+    # This preserves the full permission/security gateway
+    from app.tools.registry import get_tool_registry
+    from app.tools.base import ToolContext
+    registry = get_tool_registry()
+    approved_ctx = ToolContext(
+        run_id=run_id,
+        approved=True,  # Signals this specific action was explicitly user-approved
     )
+
+    tool_result = await asyncio.to_thread(
+        registry.execute,
+        approved_tool,
+        target_args,
+        approved_ctx,
+    )
+    tool_result_dict = tool_result.to_dict()
 
     await emit(
         run_id,
         "tool_call_completed",
         "executor",
-        del_res
+        tool_result_dict
     )
 
-    if not del_res.get("success"):
+    if not tool_result.success:
         state["approval_required"] = False
         state["approval_status"] = "approved"
         state["status"] = "failed"
         state["error"] = {
-            "error_type": "DeleteFailed",
-            "message": del_res.get("error", "Approved deletion failed."),
+            "error_type": "ApprovedToolFailed",
+            "message": str(tool_result.error) if tool_result.error else f"Approved '{approved_tool}' failed.",
             "node": "executor"
         }
 
@@ -686,19 +707,20 @@ async def resume_approved_run(
     state["approval_request"] = None
 
     state.setdefault("observations", []).append({
-        "tool": "delete_file",
-        "path": target_file,
-        "status": "deleted",
+        "tool": approved_tool,
+        "arguments": target_args,
+        "status": "approved_and_executed",
         "exit_code": 0
     })
 
     await emit(
         run_id,
-        "file_deleted",
+        "approved_tool_executed",
         "executor",
         {
-            "path": target_file,
-            "status": "deleted"
+            "tool": approved_tool,
+            "status": "executed"
+
         }
     )
 

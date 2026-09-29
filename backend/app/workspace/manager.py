@@ -346,8 +346,15 @@ class WorkspaceManager:
 # Multi-workspace manager cache
 _workspace_managers: Dict[str, WorkspaceManager] = {}
 
-def get_workspace_manager(workspace_id: str = None) -> WorkspaceManager:
+def get_workspace_manager(workspace_id: str = None, root_path: str = None) -> WorkspaceManager:
     global _workspace_managers
+    if root_path:
+        resolved = os.path.realpath(os.path.abspath(root_path))
+        key = f"custom_{resolved}"
+        if key not in _workspace_managers:
+            _workspace_managers[key] = WorkspaceManager(root_path=resolved, workspace_id=workspace_id or "custom")
+        return _workspace_managers[key]
+
     if workspace_id is None:
         workspace_id = active_workspace_id.get()
     if workspace_id not in _workspace_managers:
@@ -364,3 +371,4 @@ def get_workspace_manager(workspace_id: str = None) -> WorkspaceManager:
         os.makedirs(target_root, exist_ok=True)
         _workspace_managers[workspace_id] = WorkspaceManager(root_path=target_root, workspace_id=workspace_id or "ws_default")
     return _workspace_managers[workspace_id]
+

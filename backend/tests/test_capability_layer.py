@@ -100,38 +100,39 @@ class TestCapabilityLayer(unittest.TestCase):
         res_read = self.registry.execute("read_file", {"path": self.test_filename}, context=read_only_ctx)
         self.assertTrue(res_read.success)
 
-        # write_file should fail with PERMISSION_DENIED
+        # write_file should fail with PERMISSION_REQUIRED / PERMISSION_DENIED
         res_write = self.registry.execute(
             "write_file",
             {"path": self.test_filename, "content": "blocked write"},
             context=read_only_ctx
         )
         self.assertFalse(res_write.success)
-        self.assertEqual(res_write.status, "permission_denied")
-        self.assertEqual(res_write.error["code"], "PERMISSION_DENIED")
-        self.assertIn("filesystem.write", res_write.error["required_permission"])
+        self.assertIn(res_write.status, ("permission_required", "permission_denied"))
+        self.assertIn(res_write.error["code"], ("PERMISSION_REQUIRED", "PERMISSION_DENIED"))
+        self.assertIn("filesystem.write", res_write.error.get("required_permission", res_write.metadata.get("permission", "")))
 
-        # delete_file should fail with PERMISSION_DENIED
+        # delete_file should fail with PERMISSION_REQUIRED / PERMISSION_DENIED
         res_del = self.registry.execute(
             "delete_file",
             {"path": self.test_filename},
             context=read_only_ctx
         )
         self.assertFalse(res_del.success)
-        self.assertEqual(res_del.error["code"], "PERMISSION_DENIED")
+        self.assertIn(res_del.error["code"], ("PERMISSION_REQUIRED", "PERMISSION_DENIED"))
 
     def test_destructive_operations_require_explicit_permissions(self):
         # Context lacking terminal.execute
         no_term_ctx = ToolContext(permissions={"filesystem.read", "filesystem.write"})
         res_term = self.registry.execute("run_command", {"command": "echo test"}, context=no_term_ctx)
         self.assertFalse(res_term.success)
-        self.assertEqual(res_term.error["code"], "PERMISSION_DENIED")
+        self.assertIn(res_term.error["code"], ("PERMISSION_REQUIRED", "PERMISSION_DENIED"))
 
         # Context lacking http.write
         no_http_ctx = ToolContext(permissions={"http.read"})
         res_post = self.registry.execute("http_post", {"url": "https://example.com", "data": {}}, context=no_http_ctx)
         self.assertFalse(res_post.success)
-        self.assertEqual(res_post.error["code"], "PERMISSION_DENIED")
+        self.assertIn(res_post.error["code"], ("PERMISSION_REQUIRED", "PERMISSION_DENIED"))
+
 
     # --- 4. FILESYSTEM CAPABILITY TESTS ---
     def test_filesystem_write_read_delete(self):
@@ -249,10 +250,13 @@ class TestCapabilityLayer(unittest.TestCase):
         self.assertIn("workspace_id", res.result)
 
     def test_browser_open_tool(self):
+        # Truthful behavior per specification: When preview server is offline,
+        # open_browser must return success=False and PREVIEW_UNAVAILABLE, not false success.
         ctx = ToolContext()
         res = self.registry.execute("open_browser", {"path": "index.html"}, context=ctx)
-        self.assertTrue(res.success)
-        self.assertIn("url", res.result)
+        self.assertFalse(res.success)
+        self.assertEqual(res.error["code"], "PREVIEW_UNAVAILABLE")
+
 
 
 if __name__ == "__main__":

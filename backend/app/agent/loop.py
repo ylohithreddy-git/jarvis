@@ -199,7 +199,7 @@ async def run_agent_loop(
                 workspace_id=request.workspace_id,
                 workspace_root=ws_root,
                 emit=emit,
-                approved=True,
+                approved=False,  # approved=False is correct: permission set grants access
                 timeout_s=45,
             )
 

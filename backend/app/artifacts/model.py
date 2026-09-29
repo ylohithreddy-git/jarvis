@@ -69,6 +69,11 @@ class Artifact(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
+        """
+        Public serialization for frontend/SSE/API responses.
+        SECURITY: file_path is intentionally excluded to prevent
+        raw filesystem path leakage to the frontend.
+        """
         return {
             "artifact_id": self.artifact_id,
             "filename": self.filename,
@@ -83,4 +88,7 @@ class Artifact(BaseModel):
             "session_id": self.session_id,
             "conversation_id": self.conversation_id,
             "metadata": self.metadata
+            # file_path is intentionally NOT included here.
+            # Internal access: use artifact.file_path directly.
         }
+
